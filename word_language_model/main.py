@@ -45,6 +45,11 @@ parser.add_argument('--save', type=str, default='model.pt',
                     help='path to save the final model')
 parser.add_argument('--onnx-export', type=str, default='',
                     help='path to export the final model in onnx format')
+parser.add_argument('--sharpness-smoothing', '--ss', default=0.0, type=float,
+                    metavar='SS', help='sharpness smoothing (default: 0)')
+parser.add_argument('--adapt-type', default='none', type=str, metavar='AT',
+                    help='The type of adapting noise: none, weight or filter')
+
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -154,9 +159,31 @@ def train():
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
         hidden = repackage_hidden(hidden)
         model.zero_grad()
+
+        noises = {}
+        if args.sharpness_smoothing:
+            for key, p in model.named_parameters():
+                if hasattr(model, 'quiet_parameters') and (key in model.quiet_parameters):
+                    continue
+
+                if args.adapt_type == 'weight':
+                    noise = (torch.cuda.FloatTensor(p.size()).uniform_() * 2. - 1.) * args.sharpness_smoothing * torch.abs(p.data)
+                elif args.adapt_type == 'none':
+                    noise = (torch.cuda.FloatTensor(p.size()).uniform_() * 2. - 1.) * args.sharpness_smoothing
+                else:
+                    raise ValueError('Unkown --adapt-type')
+                noises[key] = noise
+                p.data.add_(noise)
+
         output, hidden = model(data, hidden)
         loss = criterion(output.view(-1, ntokens), targets)
         loss.backward()
+
+        # denoise @ each mini-mini-batch.
+        if args.sharpness_smoothing:
+            for key, p in model.named_parameters():
+                if key in noises:
+                    p.data.sub_(noises[key])
 
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
         torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
