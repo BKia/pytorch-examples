@@ -1,3 +1,8 @@
+# version
+pytorch: '0.4.1.post2'
+
+torchvision: '0.2.1'
+
 # PyTorch Examples
 
 A repository showcasing examples of using [PyTorch](https://github.com/pytorch/pytorch)
