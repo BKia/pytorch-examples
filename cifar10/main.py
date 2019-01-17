@@ -15,21 +15,24 @@ import argparse
 
 from models import *
 import logging
+import re
 from datetime import datetime
 from functools import partial
-# def partial(func, *args, **keywords):
-#     def newfunc(*fargs, **fkeywords):
-#         newkeywords = keywords.copy()
-#         newkeywords.update(fkeywords)
-#         return func(*(args + fargs), **newkeywords)
-#     newfunc.func = func
-#     newfunc.args = args
-#     newfunc.keywords = keywords
-#     return newfunc
+def partial(func, *args, **keywords):
+    def newfunc(*fargs, **fkeywords):
+        newkeywords = keywords.copy()
+        newkeywords.update(fkeywords)
+        return func(*(args + fargs), **newkeywords)
+    newfunc.func = func
+    newfunc.args = args
+    newfunc.keywords = keywords
+    return newfunc
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--epochs', default=300, type=int, help='the number of epochs')
+parser.add_argument('--batch-size', default=128, type=int, help='batch size')
+parser.add_argument('--print-freq', default=391, type=int, help='the frequency to print')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 args = parser.parse_args()
 
@@ -44,35 +47,27 @@ logger.addHandler(logging.StreamHandler())
 logger.info("Saving to %s", save_path)
 logger.info("Running arguments: %s", args)
 best_acc = 0  # best test accuracy
-
-def add_backward_hooks(model, mask_dict):
-    gpu_num = 1 if (args.gpu is not None) else torch.cuda.device_count()
+trained_batchs = 0
+def add_backward_hooks(model):
 
     def myhook(m, grad_input, grad_output, name=None):
-        sbsize = grad_input[0].size(0)
-        # depends on split by torch.chunk
-        device_idx = grad_input[0].device.index
-        if 1 == gpu_num:
-           sidx = 0
-           eidx = sidx + sbsize
-        elif device_idx == gpu_num - 1: # last split
-            sidx = -sbsize
-            eidx = len(mask_dict[name])
-        else:
-            sidx = sbsize * device_idx
-            eidx = sidx + sbsize
+        global trained_batchs
+        if grad_input[0] is None:
+            return grad_input
+        grad_std = grad_input[0].std() + 1.0e-10
+        grad_mean = grad_input[0].mean()
 
-        mask_subbatch = mask_dict[name][sidx:eidx].cuda(grad_input[0].device).float()
-        masked_grad_input = grad_input[0] + (1.0 - mask_subbatch) * args.feature_reg
-        return (masked_grad_input, grad_input[1], grad_input[2])
+        if trained_batchs % args.print_freq == 0:
+            logger.info('%s: mean (%.8f), std (%.8f)' % (
+                name, grad_mean, grad_std))
+
+        norm_grad_input = (grad_input[0] - grad_mean) / grad_std + grad_mean
+        return (norm_grad_input, grad_input[1], grad_input[2])
+        # return (grad_input[0], grad_input[1], grad_input[2])
 
     handles = []
-    skip_count = 0
     for idx, m in enumerate(model.named_modules()):
-        if isinstance(m[1], nn.Conv2d):
-            skip_count += 1
-            if skip_count <= args.skip_masks:
-                continue
+        if isinstance(m[1], nn.Conv2d) and (not re.match('.*shortcut.*', m[0])):
             logger.info('\t{} registering backward hook...'.format(m[0]))
             h = m[1].register_backward_hook(hook=partial(myhook, name=m[0]))
             handles.append(h)
@@ -90,6 +85,7 @@ def train(epoch, net, loader, optimizer, criterion, device='cuda'):
     train_loss = 0
     correct = 0
     total = 0
+    global trained_batchs
     for batch_idx, (inputs, targets) in enumerate(loader):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
@@ -108,6 +104,7 @@ def train(epoch, net, loader, optimizer, criterion, device='cuda'):
                         % (
                         batch_idx + 1, len(loader), train_loss / (batch_idx + 1), 100. * correct / total, correct,
                         total))
+        trained_batchs += 1
 
 def test(epoch, net, loader, criterion, device='cuda'):
     global best_acc
@@ -146,7 +143,7 @@ def test(epoch, net, loader, criterion, device='cuda'):
 
 
 def main():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' # if torch.cuda.is_available() else 'cpu'
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
     # Data
@@ -164,7 +161,7 @@ def main():
     ])
 
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=128, shuffle=True, num_workers=2)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
 
     testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
@@ -175,6 +172,7 @@ def main():
     logger.info('==> Building model..')
     # net = VGG('VGG19')
     net = ResNet18()
+    # net = CifarResNetBasic([1,1,1])
     # net = PreActResNet18()
     # net = GoogLeNet()
     # net = DenseNet121()
@@ -184,6 +182,8 @@ def main():
     # net = DPN92()
     # net = ShuffleNetG2()
     # net = SENet18()
+    add_backward_hooks(net)
+
     net = net.to(device)
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
