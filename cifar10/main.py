@@ -16,6 +16,16 @@ import argparse
 from models import *
 import logging
 from datetime import datetime
+from functools import partial
+# def partial(func, *args, **keywords):
+#     def newfunc(*fargs, **fkeywords):
+#         newkeywords = keywords.copy()
+#         newkeywords.update(fkeywords)
+#         return func(*(args + fargs), **newkeywords)
+#     newfunc.func = func
+#     newfunc.args = args
+#     newfunc.keywords = keywords
+#     return newfunc
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -34,6 +44,39 @@ logger.addHandler(logging.StreamHandler())
 logger.info("Saving to %s", save_path)
 logger.info("Running arguments: %s", args)
 best_acc = 0  # best test accuracy
+
+def add_backward_hooks(model, mask_dict):
+    gpu_num = 1 if (args.gpu is not None) else torch.cuda.device_count()
+
+    def myhook(m, grad_input, grad_output, name=None):
+        sbsize = grad_input[0].size(0)
+        # depends on split by torch.chunk
+        device_idx = grad_input[0].device.index
+        if 1 == gpu_num:
+           sidx = 0
+           eidx = sidx + sbsize
+        elif device_idx == gpu_num - 1: # last split
+            sidx = -sbsize
+            eidx = len(mask_dict[name])
+        else:
+            sidx = sbsize * device_idx
+            eidx = sidx + sbsize
+
+        mask_subbatch = mask_dict[name][sidx:eidx].cuda(grad_input[0].device).float()
+        masked_grad_input = grad_input[0] + (1.0 - mask_subbatch) * args.feature_reg
+        return (masked_grad_input, grad_input[1], grad_input[2])
+
+    handles = []
+    skip_count = 0
+    for idx, m in enumerate(model.named_modules()):
+        if isinstance(m[1], nn.Conv2d):
+            skip_count += 1
+            if skip_count <= args.skip_masks:
+                continue
+            logger.info('\t{} registering backward hook...'.format(m[0]))
+            h = m[1].register_backward_hook(hook=partial(myhook, name=m[0]))
+            handles.append(h)
+    return handles
 
 def decay_learning_rate(optimizer):
     """Sets the learning rate to the initial LR decayed by 10"""
