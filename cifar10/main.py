@@ -151,7 +151,7 @@ def test(epoch, net, loader, criterion, device='cuda'):
     # Save checkpoint.
     acc = 100.*correct/total
     if acc > best_acc:
-        logger.info('Saving the best model..')
+        logger.info('Saving the best model %.3f @ %d ...' % (acc, epoch))
         state = {
             'net': net.state_dict(),
             'acc': acc,
