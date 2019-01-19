@@ -43,7 +43,7 @@ parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting ne
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 
 parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
-parser.add_argument('--print-freq', default=391, type=int, help='the frequency to print')
+parser.add_argument('--print-freq', default=3910, type=int, help='the frequency to print')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 args = parser.parse_args()
 
