@@ -36,9 +36,10 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--backnorm', action='store_true', help='use backnorm')
 parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
+parser.add_argument('--norm-dim', default=None, type=int, help='the dim to add backnorm')
 
 parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
-                    help='the type of net (ResNetBasic or ResNetBottleneck or CifarResNetBasic or CifarPlainNetBasic)')
+                    help='the type of net (CifarResNetBasic or CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
 parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 
@@ -67,12 +68,17 @@ def add_backward_hooks(model):
         global trained_batchs
         if grad_input[0] is None:
             return grad_input
-        grad_std = grad_input[0].std() + 1.0e-10
-        grad_mean = grad_input[0].mean()
+
+        if args.norm_dim is None:
+            grad_std = grad_input[0].std() + 1.0e-10
+            grad_mean = grad_input[0].mean()
+        else:
+            grad_std = grad_input[0].std(dim=args.norm_dim, keepdim=True) + 1.0e-10
+            grad_mean = grad_input[0].mean(dim=args.norm_dim, keepdim=True)
 
         if trained_batchs % args.print_freq == 0:
             logger.info('%s: mean (%.8f), std (%.8f)' % (
-                name, grad_mean, grad_std))
+                name, grad_mean.abs().mean(), grad_std.mean()))
 
         norm_grad_input = (grad_input[0] - grad_mean) / grad_std + grad_mean
         # return (norm_grad_input, grad_input[1], grad_input[2])

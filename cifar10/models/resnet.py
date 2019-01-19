@@ -86,6 +86,27 @@ class BasicPlainBlock(nn.Module):
         out = self.relu(out)
         return out
 
+class BasicPlainNoBatchNormBlock(nn.Module):
+    expansion = 1
+    stride = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicPlainNoBatchNormBlock, self).__init__()
+        self.stride = stride
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.pool1 = nn.MaxPool2d(kernel_size=stride, stride=stride, padding=0)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        if self.stride > 1:
+            out = self.relu(self.conv1(self.pool1(x)))
+        else:
+            out = self.relu(self.conv1(x))
+        out = self.conv2(out)
+        out = self.relu(out)
+        return out
+
 class ResNet(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10):
         super(ResNet, self).__init__()
@@ -157,6 +178,40 @@ def CifarResNetBasic(num_blocks):
 def CifarPlainNetBasic(num_blocks):
     assert len(num_blocks) == 3, "3 blocks are needed, but %d is found." % len(num_blocks)
     return CifarNet(BasicPlainBlock, num_blocks)
+
+class CifarNetNoBatchNorm(nn.Module):
+    def __init__(self, block, num_blocks, num_classes=10):
+        super(CifarNetNoBatchNorm, self).__init__()
+        self.in_planes = 16
+
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
+        self.relu = nn.ReLU()
+        self.layer1 = self._make_layer(block, 16, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 32, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
+        self.linear = nn.Linear(64*block.expansion, num_classes)
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = self.relu(self.conv1(x))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = F.avg_pool2d(out, 8)
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+def CifarPlainNetBasicNoBatchNorm(num_blocks):
+    assert len(num_blocks) == 3, "3 blocks are needed, but %d is found." % len(num_blocks)
+    return CifarNetNoBatchNorm(BasicPlainNoBatchNormBlock, num_blocks)
 
 def ResNetBasic(num_blocks):
     assert len(num_blocks) == 4, "4 blocks are needed, but %d is found." % len(num_blocks)
