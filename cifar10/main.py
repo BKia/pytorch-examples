@@ -21,27 +21,13 @@ import importlib
 import logging
 import re
 from datetime import datetime
-from functools import partial
-def partial(func, *args, **keywords):
-    def newfunc(*fargs, **fkeywords):
-        newkeywords = keywords.copy()
-        newkeywords.update(fkeywords)
-        return func(*(args + fargs), **newkeywords)
-    newfunc.func = func
-    newfunc.args = args
-    newfunc.keywords = keywords
-    return newfunc
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-parser.add_argument('--backnorm', action='store_true', help='use backnorm')
-parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
-
 parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
                     help='the type of net (ResNetBasic or ResNetBottleneck or CifarResNetBasic or CifarPlainNetBasic)')
 parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-
 parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
 parser.add_argument('--print-freq', default=3910, type=int, help='the frequency to print')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -61,37 +47,6 @@ logger.info("Running arguments: %s", args)
 best_acc = 0  # best test accuracy
 trained_batchs = 0
 
-def add_backward_hooks(model):
-
-    def myhook(m, grad_input, grad_output, name=None):
-        global trained_batchs
-        if grad_input[0] is None:
-            return grad_input
-        grad_std = grad_input[0].std() + 1.0e-10
-        grad_mean = grad_input[0].mean()
-
-        if trained_batchs % args.print_freq == 0:
-            logger.info('%s: mean (%.8f), std (%.8f)' % (
-                name, grad_mean, grad_std))
-
-        norm_grad_input = (grad_input[0] - grad_mean) / grad_std + grad_mean
-        # return (norm_grad_input, grad_input[1], grad_input[2])
-        # return (grad_input[0], grad_input[1], grad_input[2])
-        grad_tuple = tuple([norm_grad_input] + list(grad_input[1:]))
-        return grad_tuple
-
-    handles = []
-    for norm_layer in args.norm_layers.split('+'):
-        path, layer_name = os.path.splitext(norm_layer)
-        layer_name = layer_name[1:]
-        logger.info('Hooking layer %s.%s' % (path, layer_name))
-        modname = importlib.import_module(path)
-        for idx, m in enumerate(model.named_modules()):
-            if isinstance(m[1], getattr(modname, layer_name)) and (not re.match('.*shortcut.*', m[0])):
-                logger.info('\t{} registering backward hook...'.format(m[0]))
-                h = m[1].register_backward_hook(hook=partial(myhook, name=m[0]))
-                handles.append(h)
-    return handles
 
 def decay_learning_rate(optimizer):
     """Sets the learning rate to the initial LR decayed by 10"""
@@ -231,8 +186,6 @@ def main():
     # net = DPN92()
     # net = ShuffleNetG2()
     # net = SENet18()
-    if args.backnorm:
-        add_backward_hooks(net)
 
     net = net.to(device)
     if device == 'cuda':
