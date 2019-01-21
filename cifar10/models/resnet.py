@@ -13,8 +13,9 @@ from units import MyReLU
 
 def init_model(model):
     for m in model.modules():
-        if isinstance(m, nn.Conv2d):
-            m.weight.data.normal_()
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+            print('reinit', m)
+            m.weight.data.normal_(0, 0.1)
 
 class BasicBlock(nn.Module):
     expansion = 1
