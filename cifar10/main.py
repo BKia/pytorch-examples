@@ -34,15 +34,16 @@ def partial(func, *args, **keywords):
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
+                    help='the type of net (CifarPlainBNConvReLUNet, CifarResNetBasic or CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
+parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
+
 parser.add_argument('--backnorm', action='store_true', help='use backnorm')
 parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
 parser.add_argument('--norm-dim', default=None, type=int, help='the dim to add backnorm')
+parser.add_argument('--reinit', action='store_true', help='reinitialize parameters')
 
-parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
-                    help='the type of net (CifarResNetBasic or CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
-parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-
 parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
 parser.add_argument('--print-freq', default=3910, type=int, help='the frequency to print')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -224,7 +225,10 @@ def main():
     classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     # Model
     logger.info('==> Building model..')
-    net = getattr(models, args.net_type)(net_arch)
+    if args.net_type == 'CifarPlainBNConvReLUNet':
+        net = getattr(models, args.net_type)(net_arch, args.reinit)
+    else:
+        net = getattr(models, args.net_type)(net_arch)
     # net = VGG('VGG19')
     # net = ResNet18()
     # net = CifarResNetBasic([1,1,1])
