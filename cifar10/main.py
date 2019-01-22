@@ -41,7 +41,7 @@ parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting ne
 parser.add_argument('--backnorm', action='store_true', help='use backnorm')
 parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
 parser.add_argument('--norm-dim', default=None, type=int, help='the dim to add backnorm')
-parser.add_argument('--reinit', action='store_true', help='reinitialize parameters')
+parser.add_argument('--reinit-std', default=None, type=float, help='reinitialization std')
 
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
@@ -225,10 +225,7 @@ def main():
     classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     # Model
     logger.info('==> Building model..')
-    if args.net_type == 'CifarPlainBNConvReLUNet':
-        net = getattr(models, args.net_type)(net_arch, args.reinit)
-    else:
-        net = getattr(models, args.net_type)(net_arch)
+    net = getattr(models, args.net_type)(net_arch, args.reinit_std)
     # net = VGG('VGG19')
     # net = ResNet18()
     # net = CifarResNetBasic([1,1,1])

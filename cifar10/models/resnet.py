@@ -11,12 +11,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from units import MyReLU
 
-def init_model(model):
-    for m in model.modules():
-        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-            print('reinit', m)
-            m.weight.data.normal_(0, 0.1)
-
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -164,7 +158,7 @@ class ResNet(nn.Module):
         return out
 
 class CifarNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10):
+    def __init__(self, block, num_blocks, num_classes=10, reinit_std=None):
         super(CifarNet, self).__init__()
         self.in_planes = 16
 
@@ -175,6 +169,12 @@ class CifarNet(nn.Module):
         self.layer2 = self._make_layer(block, 32, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
         self.linear = nn.Linear(64*block.expansion, num_classes)
+
+        if reinit_std is not None:
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    print('reinit', m)
+                    m.weight.data.normal_(0, reinit_std)
 
 
     def _make_layer(self, block, planes, num_blocks, stride):
@@ -196,7 +196,7 @@ class CifarNet(nn.Module):
         return out
 
 class CifarBNConvReLUNet(nn.Module):
-    def __init__(self, block, num_blocks, num_classes=10, reinit=True):
+    def __init__(self, block, num_blocks, num_classes=10, reinit_std=0.1):
         super(CifarBNConvReLUNet, self).__init__()
         self.in_planes = 16
 
@@ -210,8 +210,11 @@ class CifarBNConvReLUNet(nn.Module):
         self.dropout = nn.Dropout(p=0.0)
         self.linear = nn.Linear(64*block.expansion, num_classes)
 
-        if reinit:
-            init_model(self)
+        if reinit_std is not None:
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                    print('reinit', m)
+                    m.weight.data.normal_(0, reinit_std)
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
@@ -233,17 +236,17 @@ class CifarBNConvReLUNet(nn.Module):
         out = self.dropout(out)
         return out
 
-def CifarResNetBasic(num_blocks):
+def CifarResNetBasic(num_blocks, reinit_std=None):
     assert len(num_blocks) == 3, "3 blocks are needed, but %d is found." % len(num_blocks)
-    return CifarNet(BasicBlock, num_blocks)
+    return CifarNet(BasicBlock, num_blocks, reinit_std=reinit_std)
 
-def CifarPlainNetBasic(num_blocks):
+def CifarPlainNetBasic(num_blocks, reinit_std=None):
     assert len(num_blocks) == 3, "3 blocks are needed, but %d is found." % len(num_blocks)
-    return CifarNet(BasicPlainBlock, num_blocks)
+    return CifarNet(BasicPlainBlock, num_blocks, reinit_std=reinit_std)
 
-def CifarPlainBNConvReLUNet(num_blocks, reinit=False):
+def CifarPlainBNConvReLUNet(num_blocks, reinit_std=None):
     assert len(num_blocks) == 3, "3 blocks are needed, but %d is found." % len(num_blocks)
-    return CifarBNConvReLUNet(BasicPlainBNConvReLUBlock, num_blocks, reinit=reinit)
+    return CifarBNConvReLUNet(BasicPlainBNConvReLUBlock, num_blocks, reinit_std=reinit_std)
 
 class CifarNetNoBatchNorm(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10):
@@ -275,15 +278,15 @@ class CifarNetNoBatchNorm(nn.Module):
         out = self.linear(out)
         return out
 
-def CifarPlainNetBasicNoBatchNorm(num_blocks):
+def CifarPlainNetBasicNoBatchNorm(num_blocks, reinit_std=None):
     assert len(num_blocks) == 3, "3 blocks are needed, but %d is found." % len(num_blocks)
     return CifarNetNoBatchNorm(BasicPlainNoBatchNormBlock, num_blocks)
 
-def ResNetBasic(num_blocks):
+def ResNetBasic(num_blocks, reinit_std=None):
     assert len(num_blocks) == 4, "4 blocks are needed, but %d is found." % len(num_blocks)
     return ResNet(BasicBlock, num_blocks)
 
-def ResNetBottleneck(num_blocks):
+def ResNetBottleneck(num_blocks, reinit_std=None):
     assert len(num_blocks) == 4, "4 blocks are needed, but %d is found." % len(num_blocks)
     return ResNet(Bottleneck, num_blocks)
 
