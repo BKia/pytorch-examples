@@ -42,6 +42,8 @@ parser.add_argument('--backnorm', action='store_true', help='use backnorm')
 parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
 parser.add_argument('--reinit-std', default=None, type=float, help='reinitialization std')
 parser.add_argument('--norm-dim', default=None, type=int, help='the dim to add backnorm')
+parser.add_argument('--loss-scaler', default=1.0, type=float, help='The factor to scale loss')
+
 
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
@@ -117,7 +119,7 @@ def train(epoch, net, loader, optimizer, criterion, device='cuda'):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = net(inputs)
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs, targets) * args.loss_scaler
         loss.backward()
         optimizer.step()
 
@@ -144,7 +146,7 @@ def test(epoch, net, loader, criterion, device='cuda'):
         for batch_idx, (inputs, targets) in enumerate(loader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets) * args.loss_scaler
 
             test_loss += loss.item()
             _, predicted = outputs.max(1)

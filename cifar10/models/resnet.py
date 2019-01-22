@@ -172,7 +172,7 @@ class CifarNet(nn.Module):
 
         if reinit_std is not None:
             for m in self.modules():
-                if isinstance(m, nn.Conv2d):
+                if isinstance(m, nn.Linear):
                     print('reinit', m)
                     m.weight.data.normal_(0, reinit_std)
 
@@ -210,7 +210,7 @@ class CifarBNConvReLUNet(nn.Module):
 
         if reinit_std is not None:
             for m in self.modules():
-                if isinstance(m, nn.Conv2d):
+                if isinstance(m, nn.Linear):
                     print('reinit', m)
                     m.weight.data.normal_(0, reinit_std)
 
