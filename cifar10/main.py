@@ -258,7 +258,7 @@ def main():
         start_epoch = checkpoint['epoch']
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=(5e-4)*args.loss_scaler)
 
     curves = np.zeros((args.epochs, 5))
     for epoch in range(start_epoch, start_epoch+args.epochs):
