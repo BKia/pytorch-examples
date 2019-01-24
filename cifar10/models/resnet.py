@@ -9,7 +9,23 @@ Reference:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from units import MyReLU
+
+def init_model(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            print('Initializing ', m)
+            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            m.weight.data.normal_(0, math.sqrt(2. / n))
+        elif isinstance(m, nn.BatchNorm2d):
+            print('Initializing ', m)
+            m.weight.data.fill_(1)
+            m.bias.data.zero_()
+        elif isinstance(m, nn.Linear):
+            print('Initializing ', m)
+            n = m.out_features
+            m.weight.data.normal_(0, math.sqrt(1. / n))
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -168,6 +184,7 @@ class CifarNet(nn.Module):
         self.layer1 = self._make_layer(block, 16, num_blocks[0], stride=1)
         self.layer2 = self._make_layer(block, 32, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
+        self.dropout = nn.Dropout(p=0.0)
         self.linear = nn.Linear(64*block.expansion, num_classes)
 
         if reinit_std is not None:
@@ -175,6 +192,8 @@ class CifarNet(nn.Module):
                 if isinstance(m, nn.Linear):
                     print('reinit', m)
                     m.weight.data.normal_(0, reinit_std)
+
+        init_model(self)
 
 
     def _make_layer(self, block, planes, num_blocks, stride):
@@ -193,6 +212,7 @@ class CifarNet(nn.Module):
         out = F.avg_pool2d(out, 8)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
+        out = self.dropout(out) # p=0.0, just for hooking
         return out
 
 class CifarBNConvReLUNet(nn.Module):
