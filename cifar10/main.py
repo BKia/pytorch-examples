@@ -21,6 +21,8 @@ import importlib
 import logging
 import re
 from datetime import datetime
+import collections
+import utils
 from functools import partial
 def partial(func, *args, **keywords):
     def newfunc(*fargs, **fkeywords):
@@ -34,17 +36,20 @@ def partial(func, *args, **keywords):
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
-parser.add_argument('--loss-scaler', default=1.0, type=float, help='The factor to scale loss')
 parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
-                    help='the type of net (CifarPlainBNConvReLUNet, CifarResNetBasic or CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
+                    help='the type of net (CifarResNetNoBNBasic, CifarPlainBNConvReLUNet, CifarResNetBasic,'
+                         ' CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
 parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
 
+parser.add_argument('--norm-init', action='store_true', help='use norm initialization')
+parser.add_argument('--init-batch-size', default=2000, type=int, help='batch size')
+parser.add_argument('--loss-scaler', default=1.0, type=float, help='The factor to scale loss')
+
+parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 parser.add_argument('--backnorm', action='store_true', help='use backnorm')
 parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
 parser.add_argument('--reinit-std', default=None, type=float, help='reinitialization std')
 parser.add_argument('--norm-dim', default=None, type=int, help='the dim to add backnorm')
-
-parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
 parser.add_argument('--print-freq', default=3910, type=int, help='the frequency to print')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -63,6 +68,10 @@ logger.info("Saving to %s", save_path)
 logger.info("Running arguments: %s", args)
 best_acc = 0  # best test accuracy
 trained_batchs = 0
+
+def remove_hooks(hs):
+    for h in hs:
+        h.remove()
 
 def add_backward_hooks(model):
 
@@ -103,10 +112,100 @@ def add_backward_hooks(model):
                 handles.append(h)
     return handles
 
+activation_mean_std = collections.OrderedDict()
+hooked_layers = collections.OrderedDict()
+def add_forward_hooks(model):
+
+    def myhook(m, input, output, name=None):
+        activation_mean_std[name] = {'mean': output.mean(), 'std': output.std()}
+        if trained_batchs % args.print_freq == 1:
+            logger.info('%s: mean (%.8f), std (%.8f)' % (
+                name, activation_mean_std[name]['mean'], activation_mean_std[name]['std']))
+
+    handles = []
+    logger.info('Hooking Conv2d ...')
+    for idx, m in enumerate(model.named_modules()):
+        if isinstance(m[1], nn.Conv2d):
+            logger.info('\t{} registering forward hook...'.format(m[0]))
+            h = m[1].register_forward_hook(hook=partial(myhook, name=m[0]))
+            handles.append(h)
+            hooked_layers[m[0]] = m[1]
+    return handles
+
 def decay_learning_rate(optimizer):
     """Sets the learning rate to the initial LR decayed by 10"""
     for param_group in optimizer.param_groups:
         param_group['lr'] = param_group['lr'] * 0.1
+
+# Training
+def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, threshold=5.0e-2, device='cuda'):
+    logger.info('\nReinitializing %s for maximum %d epochs' % (layer_name, max_epoch))
+    net.eval()
+    test_loss = 0
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        orig_std = layer.weight.data.std()
+        min_std = 0.1 * orig_std
+        max_std = 10.0 * orig_std
+        current_std = orig_std
+        logger.info('\tinitial stds: [%.6f, %.6f, %.6f]' % (min_std, current_std, max_std))
+        found = False
+        ema_mean = utils.ExponentialMovingAverage(decay=0.0, scale=True)
+        ema_std = utils.ExponentialMovingAverage(decay=0.0, scale=True)
+        done = False
+        for epoch in range(max_epoch):
+            for batch_idx, (inputs, targets) in enumerate(loader):
+                inputs, targets = inputs.to(device), targets.to(device)
+                outputs = net(inputs)
+                loss = criterion(outputs, targets) * args.loss_scaler
+
+                test_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += targets.size(0)
+                correct += predicted.eq(targets).sum().item()
+
+                # adjust std
+                ema_mean.push(activation_mean_std[layer_name]['mean'])
+                ema_std.push(activation_mean_std[layer_name]['std'])
+                if 0 == batch_idx % 5 or batch_idx == len(loader) - 1:
+                    logger.info('\t(%d %d/%d) ==> mean: %.6f, std: %.6f | avg mean %.6f, avg std %.6f'
+                                % (epoch+1, batch_idx + 1, len(loader),
+                                   activation_mean_std[layer_name]['mean'],
+                                   activation_mean_std[layer_name]['std'],
+                                   ema_mean.average(),
+                                   ema_std.average()))
+
+                if abs(ema_std.average() - 1.0) < threshold:
+                    found = True
+                    done = True
+                    break
+
+                if ema_std.average() > 1.0:
+                    max_std = current_std
+                else:
+                    min_std = current_std
+                current_std = (min_std + max_std) / 2.0
+                # logger.info('\tsetting current stds: [%.6f, %.6f, %.6f]' %(min_std, current_std, max_std))
+                layer.weight.data.normal_(0, current_std)
+
+                if max_std - min_std < 1.0e-3:
+                    logger.info('\tfinised because of a small search range [%.6f, %.6f]' % (min_std, max_std))
+                    done = True
+                    break
+
+            if done:
+                break
+
+        logger.info('\tfound=%r at epoch %d %d/%d. mean: %.6f, std: %.6f | avg mean %.6f, avg std %.6f'
+                    % (found, epoch+1, batch_idx+1, len(loader),
+                       activation_mean_std[layer_name]['mean'],
+                       activation_mean_std[layer_name]['std'],
+                       ema_mean.average(),
+                       ema_std.average()))
+        logger.info('\tOriginal std: %.6f -> new std: %.6f' % (orig_std, current_std))
+
+    return found
 
 # Training
 def train(epoch, net, loader, optimizer, criterion, device='cuda'):
@@ -221,6 +320,7 @@ def main():
 
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+    train_init_loader = torch.utils.data.DataLoader(trainset, batch_size=args.init_batch_size, shuffle=True, num_workers=2)
 
     testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
     testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
@@ -244,7 +344,15 @@ def main():
     if args.backnorm:
         add_backward_hooks(net)
 
+    criterion = nn.CrossEntropyLoss()
     net = net.to(device)
+
+    if args.norm_init:
+        fwd_hks = add_forward_hooks(net)
+        for layer_name in hooked_layers:
+            norm_initialization(10, net, layer_name, hooked_layers[layer_name], train_init_loader, criterion)
+        remove_hooks(fwd_hks)
+
     if device == 'cuda':
         net = torch.nn.DataParallel(net)
         cudnn.benchmark = True
@@ -258,8 +366,9 @@ def main():
         best_acc = checkpoint['acc']
         start_epoch = checkpoint['epoch']
 
-    criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=(5e-4)*args.loss_scaler)
+
+
 
     curves = np.zeros((args.epochs, 5))
     for epoch in range(start_epoch, start_epoch+args.epochs):
