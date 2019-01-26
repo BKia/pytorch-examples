@@ -40,11 +40,10 @@ parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
                     help='the type of net (CifarResNetNoBNBasic, CifarPlainBNConvReLUNet, CifarResNetBasic,'
                          ' CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
 parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
-
 parser.add_argument('--norm-init', action='store_true', help='use norm initialization')
+
 parser.add_argument('--init-batch-size', default=2000, type=int, help='batch size')
 parser.add_argument('--loss-scaler', default=1.0, type=float, help='The factor to scale loss')
-
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
 parser.add_argument('--backnorm', action='store_true', help='use backnorm')
 parser.add_argument('--norm-layers', default='torch.nn.Conv2d', type=str, help='the type of layers whose inputs are back normalized. Connect multiple types by +')
@@ -138,7 +137,7 @@ def decay_learning_rate(optimizer):
         param_group['lr'] = param_group['lr'] * 0.1
 
 # Training
-def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, threshold=5.0e-2, device='cuda'):
+def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, threshold=2.0e-2, device='cuda'):
     logger.info('\nReinitializing %s for maximum %d epochs' % (layer_name, max_epoch))
     net.eval()
     test_loss = 0
@@ -189,7 +188,7 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
                 # logger.info('\tsetting current stds: [%.6f, %.6f, %.6f]' %(min_std, current_std, max_std))
                 layer.weight.data.normal_(0, current_std)
 
-                if max_std - min_std < 1.0e-3:
+                if max_std - min_std < 1.0e-4:
                     logger.info('\tfinised because of a small search range [%.6f, %.6f]' % (min_std, max_std))
                     done = True
                     break
