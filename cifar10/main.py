@@ -41,6 +41,7 @@ parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
                          ' CifarPlainNetBasic or CifarPlainNetBasicNoBatchNorm or ResNetBasic or ResNetBottleneck)')
 parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
 parser.add_argument('--norm-init', action='store_true', help='use norm initialization')
+parser.add_argument('--adaptive-decay', default=None, type=float, help='coefficient to adapt weight decay to Gaussian prior')
 
 parser.add_argument('--init-batch-size', default=2000, type=int, help='batch size')
 parser.add_argument('--loss-scaler', default=1.0, type=float, help='The factor to scale loss')
@@ -145,6 +146,9 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
     total = 0
     with torch.no_grad():
         orig_std = layer.weight.data.std()
+        layer.weight.data.normal_(0, orig_std)
+        if layer.bias is not None:
+            layer.bias.data.normal_(0, orig_std)
         min_std = 0.1 * orig_std
         max_std = 10.0 * orig_std
         current_std = orig_std
@@ -187,6 +191,8 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
                 current_std = (min_std + max_std) / 2.0
                 # logger.info('\tsetting current stds: [%.6f, %.6f, %.6f]' %(min_std, current_std, max_std))
                 layer.weight.data.normal_(0, current_std)
+                if layer.bias is not None:
+                    layer.bias.data.normal_(0, current_std)
 
                 if max_std - min_std < 1.0e-4:
                     logger.info('\tfinised because of a small search range [%.6f, %.6f]' % (min_std, max_std))
@@ -204,7 +210,7 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
                        ema_std.average()))
         logger.info('\tOriginal std: %.6f -> new std: %.6f' % (orig_std, current_std))
 
-    return found
+    return found, current_std
 
 # Training
 def train(epoch, net, loader, optimizer, criterion, device='cuda'):
@@ -346,10 +352,20 @@ def main():
     criterion = nn.CrossEntropyLoss()
     net = net.to(device)
 
+    params_decay_options = {}
     if args.norm_init:
         fwd_hks = add_forward_hooks(net)
         for layer_name in hooked_layers:
-            norm_initialization(10, net, layer_name, hooked_layers[layer_name], train_init_loader, criterion)
+            found, current_std = norm_initialization(10, net, layer_name, hooked_layers[layer_name], train_init_loader, criterion)
+            if args.adaptive_decay is not None:
+                ad_wd = args.adaptive_decay * 0.5 / (current_std ** 2) * args.batch_size / len(trainloader) * args.loss_scaler
+                params_decay_options[id(hooked_layers[layer_name].weight)] = \
+                    {'params': [hooked_layers[layer_name].weight],
+                     'weight_decay': ad_wd}
+                if hooked_layers[layer_name].bias is not None:
+                    params_decay_options[id(hooked_layers[layer_name].bias)] = \
+                        {'params': [hooked_layers[layer_name].bias],
+                         'weight_decay': ad_wd}
         remove_hooks(fwd_hks)
 
     if device == 'cuda':
@@ -365,7 +381,16 @@ def main():
         best_acc = checkpoint['acc']
         start_epoch = checkpoint['epoch']
 
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=(5e-4)*args.loss_scaler)
+    params_options = []
+    for name, param in net.named_parameters():
+        if id(param) in params_decay_options:
+            logger.info('%s weight decay is adapted to %.6f' % (name, params_decay_options[id(param)]['weight_decay']))
+            params_options.append(params_decay_options[id(param)])
+        else:
+            logger.info('%s weight decay is using the default' % (name))
+            params_options.append({'params': [param]})
+    # optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=(5e-4)*args.loss_scaler)
+    optimizer = optim.SGD(params_options, lr=args.lr, momentum=0.9, weight_decay=(5e-4) * args.loss_scaler)
 
 
 
