@@ -138,8 +138,8 @@ def decay_learning_rate(optimizer):
         param_group['lr'] = param_group['lr'] * 0.1
 
 # Training
-def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, threshold=2.0e-2, device='cuda'):
-    logger.info('\nReinitializing %s for maximum %d epochs' % (layer_name, max_epoch))
+def norm_initialization(max_iter, net, layer_name, layer, loader, criterion, threshold=1.0e-2, device='cuda'):
+    logger.info('\nReinitializing %s for maximum %d iterations' % (layer_name, max_iter))
     net.eval()
     test_loss = 0
     correct = 0
@@ -156,10 +156,11 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
         found = False
         ema_mean = utils.ExponentialMovingAverage(decay=0.0, scale=True)
         ema_std = utils.ExponentialMovingAverage(decay=0.0, scale=True)
-        done = False
-        for epoch in range(max_epoch):
-            for batch_idx, (inputs, targets) in enumerate(loader):
-                inputs, targets = inputs.to(device), targets.to(device)
+        for batch_idx, (inputs, targets) in enumerate(loader):
+            inputs, targets = inputs.to(device), targets.to(device)
+            break
+        for iter in range(max_iter):
+            # for batch_idx, (inputs, targets) in enumerate(loader):
                 outputs = net(inputs)
                 loss = criterion(outputs, targets) * args.loss_scaler
 
@@ -171,9 +172,9 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
                 # adjust std
                 ema_mean.push(activation_mean_std[layer_name]['mean'])
                 ema_std.push(activation_mean_std[layer_name]['std'])
-                if 0 == batch_idx % 5 or batch_idx == len(loader) - 1:
-                    logger.info('\t(%d %d/%d) ==> mean: %.6f, std: %.6f | avg mean %.6f, avg std %.6f'
-                                % (epoch+1, batch_idx + 1, len(loader),
+                if 0 == iter % 5 or iter == max_iter - 1:
+                    logger.info('\t %d iteration ==> mean: %.6f, std: %.6f | avg mean %.6f, avg std %.6f'
+                                % (iter,
                                    activation_mean_std[layer_name]['mean'],
                                    activation_mean_std[layer_name]['std'],
                                    ema_mean.average(),
@@ -181,13 +182,12 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
 
                 if abs(ema_std.average() - 1.0) < threshold:
                     found = True
-                    done = True
                     break
 
                 if ema_std.average() > 1.0:
-                    max_std = current_std
+                    max_std = min(current_std * 1.5, max_std - 1.1e-4)
                 else:
-                    min_std = current_std
+                    min_std = max(current_std * 0.5, min_std + 1.1e-4)
                 current_std = (min_std + max_std) / 2.0
                 # logger.info('\tsetting current stds: [%.6f, %.6f, %.6f]' %(min_std, current_std, max_std))
                 layer.weight.data.normal_(0, current_std)
@@ -196,14 +196,11 @@ def norm_initialization(max_epoch, net, layer_name, layer, loader, criterion, th
 
                 if max_std - min_std < 1.0e-4:
                     logger.info('\tfinised because of a small search range [%.6f, %.6f]' % (min_std, max_std))
-                    done = True
                     break
 
-            if done:
-                break
 
-        logger.info('\tfound=%r at epoch %d %d/%d. mean: %.6f, std: %.6f | avg mean %.6f, avg std %.6f'
-                    % (found, epoch+1, batch_idx+1, len(loader),
+        logger.info('\tfound=%r at iter %d. mean: %.6f, std: %.6f | avg mean %.6f, avg std %.6f'
+                    % (found, iter,
                        activation_mean_std[layer_name]['mean'],
                        activation_mean_std[layer_name]['std'],
                        ema_mean.average(),
@@ -356,7 +353,7 @@ def main():
     if args.norm_init:
         fwd_hks = add_forward_hooks(net)
         for layer_name in hooked_layers:
-            found, current_std = norm_initialization(10, net, layer_name, hooked_layers[layer_name], train_init_loader, criterion)
+            found, current_std = norm_initialization(250, net, layer_name, hooked_layers[layer_name], train_init_loader, criterion)
             if args.adaptive_decay is not None:
                 ad_wd = args.adaptive_decay * 0.5 / (current_std ** 2) * args.batch_size / len(trainloader) * args.loss_scaler
                 params_decay_options[id(hooked_layers[layer_name].weight)] = \
