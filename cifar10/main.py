@@ -23,6 +23,8 @@ import re
 from datetime import datetime
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
+parser.add_argument('--optimizer', '--opt', default='sgd', type=str,
+                    help='sgd variants (sgd, adam, amsgrad, adagrad, adadelta, rmsprop)')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
                     help='the type of net (ResNetBasic or ResNetBottleneck or CifarResNetBasic or CifarPlainNetBasic)')
@@ -146,6 +148,25 @@ def plot_curves(curves, save_path):
     ax2.legend(('Train accuracy', 'Val accuracy', 'Val moving avg'), loc='lower left')
     fig.savefig(os.path.join(save_path, 'curves-vs-epochs.pdf'))
 
+def get_optimizer(net):
+    wd = 5e-4
+    if 'sgd' == args.optimizer:
+        optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=wd)
+    elif 'adam' == args.optimizer:
+        optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=wd)
+    elif 'amsgrad' == args.optimizer:
+        optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=wd, amsgrad=True)
+    elif 'adagrad' == args.optimizer:
+        optimizer = optim.Adagrad(net.parameters(), lr=args.lr, weight_decay=wd)
+    elif 'adadelta' == args.optimizer:
+        optimizer = optim.Adadelta(net.parameters(), weight_decay=wd)
+    elif 'rmsprop' == args.optimizer:
+        optimizer = optim.RMSprop(net.parameters(), lr=args.lr, alpha=0.99, weight_decay=wd)
+    else:
+        logger.fatal('Unknown --optimizer')
+        raise ValueError('Unknown --optimizer')
+    return optimizer
+
 def main():
     device = 'cuda' # if torch.cuda.is_available() else 'cpu'
     start_epoch = 0  # start from epoch 0 or last checkpoint epoch
@@ -202,7 +223,7 @@ def main():
         start_epoch = checkpoint['epoch']
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = get_optimizer(net)
 
     curves = np.zeros((args.epochs, 5))
     for epoch in range(start_epoch, start_epoch+args.epochs):

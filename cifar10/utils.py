@@ -36,12 +36,15 @@ class MovingMaximum(object):
         return res
 
 class ExponentialMovingAverage(object):
-    def __init__(self, decay=0.95):
+    def __init__(self, decay=0.95, scale=False):
         self.data = []
         self.decay = decay
+        self.number = 0
+        self.scale = scale
         self.avg_val = 0.0
 
     def push(self, current_data):
+        self.number += 1
         self.avg_val = self.decay * self.avg_val + (1 - self.decay) * current_data
         self.data.append(self.avg_val)
 
@@ -54,6 +57,12 @@ class ExponentialMovingAverage(object):
         except IndexError:
             res = self.data[end]
         return res
+
+    def average(self):
+        if self.scale:
+            return self.avg_val / (1.0 - self.decay ** self.number)
+        else:
+            return self.avg_val
 
 class TorchExponentialMovingAverage(object):
     def __init__(self, decay=0.999):
