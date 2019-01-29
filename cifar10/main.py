@@ -23,14 +23,17 @@ import re
 from datetime import datetime
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-parser.add_argument('--optimizer', '--opt', default='sgd', type=str,
+parser.add_argument('--optimizer', '--opt', default='adam', type=str,
                     help='sgd variants (sgd, adam, amsgrad, adagrad, adadelta, rmsprop)')
-parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--lr', default=0.001, type=float, help='learning rate')
+parser.add_argument('--loss-scaler', '--ls', default=1.0, type=float, help='loss scaler to change the curvature')
+
 parser.add_argument('--net-type', default='CifarResNetBasic', type=str,
                     help='the type of net (ResNetBasic or ResNetBottleneck or CifarResNetBasic or CifarPlainNetBasic)')
 parser.add_argument('--num-blocks', default='3-3-3', type=str, help='starting net')
+
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--epochs', default=200, type=int, help='the number of epochs')
+parser.add_argument('--epochs', default=300, type=int, help='the number of epochs')
 parser.add_argument('--print-freq', default=3910, type=int, help='the frequency to print')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
 args = parser.parse_args()
@@ -67,7 +70,7 @@ def train(epoch, net, loader, optimizer, criterion, device='cuda'):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = net(inputs)
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs, targets) * args.loss_scaler
         loss.backward()
         optimizer.step()
 
@@ -94,7 +97,7 @@ def test(epoch, net, loader, criterion, device='cuda'):
         for batch_idx, (inputs, targets) in enumerate(loader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
-            loss = criterion(outputs, targets)
+            loss = criterion(outputs, targets) * args.loss_scaler
 
             test_loss += loss.item()
             _, predicted = outputs.max(1)
@@ -149,19 +152,20 @@ def plot_curves(curves, save_path):
     fig.savefig(os.path.join(save_path, 'curves-vs-epochs.pdf'))
 
 def get_optimizer(net):
-    wd = 5e-4
+    wd = 5e-4  * args.loss_scaler
+    lr = args.lr
     if 'sgd' == args.optimizer:
-        optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=wd)
+        optimizer = optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=wd)
     elif 'adam' == args.optimizer:
-        optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=wd)
+        optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
     elif 'amsgrad' == args.optimizer:
-        optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=wd, amsgrad=True)
+        optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=wd, amsgrad=True)
     elif 'adagrad' == args.optimizer:
-        optimizer = optim.Adagrad(net.parameters(), lr=args.lr, weight_decay=wd)
+        optimizer = optim.Adagrad(net.parameters(), lr=lr, weight_decay=wd)
     elif 'adadelta' == args.optimizer:
-        optimizer = optim.Adadelta(net.parameters(), weight_decay=wd)
+        optimizer = optim.Adadelta(net.parameters(), lr=lr, weight_decay=wd)
     elif 'rmsprop' == args.optimizer:
-        optimizer = optim.RMSprop(net.parameters(), lr=args.lr, alpha=0.99, weight_decay=wd)
+        optimizer = optim.RMSprop(net.parameters(), lr=lr, alpha=0.99, weight_decay=wd)
     else:
         logger.fatal('Unknown --optimizer')
         raise ValueError('Unknown --optimizer')
