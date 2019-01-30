@@ -231,7 +231,7 @@ def main():
 
     curves = np.zeros((args.epochs, 5))
     for epoch in range(start_epoch, start_epoch+args.epochs):
-        if epoch == args.epochs / 2 or epoch == args.epochs * 3 / 4:
+        if args.optimizer == 'sgd' and (epoch == args.epochs / 2 or epoch == args.epochs * 3 / 4):
             logger.info('======> decaying learning rate')
             decay_learning_rate(optimizer)
 
